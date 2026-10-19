@@ -1,20 +1,28 @@
-# NIRNAY — local development and Firebase setup
+# NIRNAY — local development with PostgreSQL and Firebase
 
-NIRNAY has a React + TypeScript + Vite frontend in `frontend/` and a FastAPI backend in `backend/`. Firebase Authentication handles browser sign-in; the backend verifies Firebase ID tokens with Firebase Admin. Firestore stores per-user records and metadata, Firebase Storage stores private document objects, and Firebase Cloud Messaging provides browser notifications.
+NIRNAY uses:
+- **PostgreSQL** for application profiles, user records, document metadata, and push-installation metadata.
+- **Firebase Authentication** for user registration and sign-in.
+- **Firebase Storage** for private uploaded document files.
+- **Firebase Cloud Messaging** for optional browser notifications.
+- **FastAPI** to verify Firebase ID tokens and authorize each user's database/file operations.
+
+Firestore is not used by this backend. PostgreSQL tables are created automatically when the backend starts for the first time.
 
 ## Requirements
 
 - Git
 - Node.js LTS with npm
-- Python 3.11 or newer (use the version supported by your local deployment)
-- A Firebase project with billing enabled where required by the Firebase products you use
+- Python 3.11 or newer
+- PostgreSQL 15+ installed and running locally
+- A Firebase project
 
-## 1. Clone and install
+## 1. Get the code and install frontend packages
 
-From PowerShell:
+Run from PowerShell:
 
 ```powershell
-git clone https://github.com/ayushgupta09094-bugslayer/NIRNAY.git
+git clone --branch feature/postgresql-backend https://github.com/ayushgupta09094-bugslayer/NIRNAY.git
 cd NIRNAY
 
 cd frontend
@@ -22,82 +30,144 @@ npm install
 cd ..
 ```
 
-## 2. Configure Firebase Web App
+If you are already working from a clone, do not clone over it. Make a backup or use a separate folder before switching branches when you have uncommitted changes.
 
-1. Open the Firebase Console and create/select your project.
-2. In Project settings → General → Your apps, add a Web app and copy its Firebase config.
-3. In Authentication → Sign-in method, enable **Email/Password**.
-4. In Authentication → Settings → Authorized domains, make sure `localhost` is allowed for local development.
-5. Copy the frontend environment template:
+## 2. Firebase Authentication and Web App
+
+1. Open the [Firebase Console](https://console.firebase.google.com/) and create/select your project.
+2. Go to Project settings → General → Your apps, register a Web app, and copy its config.
+3. Open Build → Authentication → Sign-in method and enable **Email/Password**.
+4. In Authentication settings → Authorized domains, make sure `localhost` is allowed for local development.
+5. Create the frontend env file:
 
    ```powershell
    Copy-Item frontend/.env.example frontend/.env.local
+   notepad frontend/.env.local
    ```
 
-6. Open `frontend/.env.local` and replace the placeholder values with the Web App values:
-   - `VITE_FIREBASE_API_KEY`
-   - `VITE_FIREBASE_AUTH_DOMAIN`
-   - `VITE_FIREBASE_PROJECT_ID`
-   - `VITE_FIREBASE_STORAGE_BUCKET`
-   - `VITE_FIREBASE_MESSAGING_SENDER_ID`
-   - `VITE_FIREBASE_APP_ID`
+6. Fill in the Web App values:
 
-For notifications, open Firebase Console → Cloud Messaging → Web configuration / Web Push certificates. Generate or copy the **Web Push public VAPID key** and set `VITE_FIREBASE_VAPID_KEY` to that value.
+   ```dotenv
+   VITE_FIREBASE_API_KEY=your-web-api-key
+   VITE_FIREBASE_AUTH_DOMAIN=your-project-id.firebaseapp.com
+   VITE_FIREBASE_PROJECT_ID=your-project-id
+   VITE_FIREBASE_STORAGE_BUCKET=your-actual-storage-bucket
+   VITE_FIREBASE_MESSAGING_SENDER_ID=your-sender-id
+   VITE_FIREBASE_APP_ID=your-web-app-id
+   VITE_FIREBASE_VAPID_KEY=your-web-push-public-vapid-key
+   VITE_API_BASE_URL=
+   ```
 
-Firebase Web App configuration and the VAPID public key are client-side values, not service-account secrets. Never put a service-account JSON key or private key in a `VITE_*` variable or commit it.
+   Replace the example values with the actual values from your project. The VAPID key is only needed to enable push notifications.
 
-## 3. Enable Firestore and Storage
+Firebase Web App config and the Web Push VAPID public key are client-side values. Never place a Firebase Admin service-account JSON/private key in a `VITE_*` variable or in source control.
 
-1. Firebase Console → Firestore Database → Create database.
-2. Firebase Console → Storage → Get started.
-3. Keep the repository's Firestore and Storage rules deployed. They deny direct browser access; the FastAPI backend accesses data after verifying the signed-in user's Firebase ID token and scopes records to that UID.
+## 3. Install and create the PostgreSQL database
 
-## 4. Configure Firebase Admin for the backend
+You do **not** need to create a Firestore database. Application data goes into PostgreSQL.
 
-Create a service account in Firebase Console → Project settings → Service accounts → Generate new private key. Store the downloaded JSON locally at `backend/service-account.json`; never commit it.
+### A. Start PostgreSQL
 
-Create the backend environment:
+Install PostgreSQL for Windows using the official installer from [postgresql.org](https://www.postgresql.org/download/windows/). Remember the password you choose for the PostgreSQL administrator (usually `postgres`) and keep the database service running.
+
+### B. Create a database and app user
+
+Open **pgAdmin**, connect to your local PostgreSQL server, and open the Query Tool while connected as the PostgreSQL administrator. Run the first statement and execute it; then run the second statement separately and execute it. This avoids PostgreSQL's restriction on creating a database inside a transaction block:
+
+```sql
+CREATE USER nirnay_user WITH PASSWORD 'choose-a-strong-password';
+```
+
+```sql
+CREATE DATABASE nirnay OWNER nirnay_user;
+```
+
+Replace the sample password before running it. If you already created the user or database, do not re-run these statements blindly; keep the existing database and credentials.
+
+Alternatively, if `psql` is on your PATH, run:
+
+```powershell
+psql -U postgres -h 127.0.0.1 -p 5432
+```
+
+Then enter the same SQL in the psql prompt. Exit psql with `\q`.
+
+### C. Set the database connection URL
+
+Create the backend environment file:
 
 ```powershell
 Copy-Item backend/.env.example backend/.env
+notepad backend/.env
 ```
 
-Edit `backend/.env` and set the same project ID and storage bucket:
+Set `DATABASE_URL` to the username, password, host, port, and database you just created:
 
 ```dotenv
-FIREBASE_PROJECT_ID=your-project-id
-FIREBASE_STORAGE_BUCKET=your-project-id.firebasestorage.app
-GOOGLE_APPLICATION_CREDENTIALS=./service-account.json
-FRONTEND_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
-ENABLE_TEST_NOTIFICATIONS=false
+DATABASE_URL=postgresql+psycopg2://nirnay_user:choose-a-strong-password@127.0.0.1:5432/nirnay
 ```
 
-Use the actual bucket name displayed in Firebase Console → Storage. Some older projects use a `.appspot.com` bucket. Because the credential path above is relative to the backend working directory, launch Uvicorn from `backend/`.
+If your password contains special URL characters (such as `@`, `:`, `/`, or `#`), URL-encode the password portion or choose a strong development password that avoids URL-reserved characters. Keep `DATABASE_URL` private and never commit `backend/.env`.
 
-Install and start the backend (PowerShell):
+The backend uses SQLAlchemy and psycopg2 to connect to PostgreSQL. Its first startup creates these tables if they do not exist:
+
+- `users`: Firebase UID and basic profile fields.
+- `user_records`: user-owned structured records; `data` is stored as PostgreSQL JSON.
+- `user_documents`: file metadata and Firebase Storage object path (file bytes are not stored in PostgreSQL).
+- `push_installations`: notification installation identifiers associated with a Firebase UID.
+
+## 4. Enable Firebase Storage (files only)
+
+1. In Firebase Console, open Build → Storage and choose **Get started** to create/enable the Storage bucket.
+2. Copy the exact bucket name shown in the console (newer projects often use `PROJECT_ID.firebasestorage.app`; some older ones use `PROJECT_ID.appspot.com`).
+3. In `backend/.env`, set:
+
+   ```dotenv
+   FIREBASE_PROJECT_ID=your-project-id
+   FIREBASE_STORAGE_BUCKET=your-actual-storage-bucket
+   GOOGLE_APPLICATION_CREDENTIALS=./service-account.json
+   FRONTEND_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+   ENABLE_TEST_NOTIFICATIONS=false
+   ```
+
+The supplied `storage.rules` denies direct browser reads/writes. The backend uses Firebase Admin after validating the Firebase ID token, checks that document metadata belongs to the signed-in UID, and then accesses the file in Storage.
+
+## 5. Configure Firebase Admin credentials for FastAPI
+
+1. In Firebase Console → Project settings → Service accounts, generate a private key for a service account.
+2. Save the downloaded JSON file locally as `backend/service-account.json`.
+3. Confirm `GOOGLE_APPLICATION_CREDENTIALS=./service-account.json` is set in `backend/.env`.
+4. Verify that your environment file has the same `FIREBASE_PROJECT_ID` as your Web App config and the correct Storage bucket name.
+
+The service-account file is a private server credential. Never commit or share it. The repository's `.gitignore` excludes service-account JSON files and environment files.
+
+## 6. Install and run the backend
+
+Open PowerShell at the repository root:
 
 ```powershell
 cd backend
+
 py -m venv venv
 .\venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-Copy-Item .env.example .env -ErrorAction SilentlyContinue
+
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-If PowerShell prevents venv activation, use this for the current terminal only, then activate again:
+If PowerShell blocks venv activation, run this in that terminal and activate again:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\venv\Scripts\Activate.ps1
 ```
 
-Open a second terminal to continue with the frontend.
+If the backend does not start, check that PostgreSQL is running, that `DATABASE_URL` matches your database credentials, and that the current working directory is `backend/` so the service-account path resolves correctly.
 
-## 5. Start the frontend
+## 7. Run and check the frontend
 
-In a new PowerShell terminal, from the repository root:
+Open a second PowerShell terminal at the repository root:
 
 ```powershell
 cd frontend
@@ -107,46 +177,31 @@ npm run build
 npm run dev
 ```
 
-Vite usually serves the frontend at http://localhost:5173. The development proxy forwards `/api` to `http://127.0.0.1:8000`. To use another backend URL, set `VITE_DEV_API_TARGET` before starting Vite.
+Open these URLs:
 
-Check backend health at http://127.0.0.1:8000/healthz and API documentation at http://127.0.0.1:8000/docs.
+- Frontend: http://localhost:5173
+- API health: http://127.0.0.1:8000/healthz
+- Interactive API docs: http://127.0.0.1:8000/docs
 
-## 6. Test the complete local flow
+The Vite development server proxies `/api` to the local backend at `http://127.0.0.1:8000`.
+
+## 8. Test user data and file uploads
 
 1. Open http://localhost:5173/register and create a test account.
-2. Sign in, then confirm the dashboard loads.
-3. Save a test record. Check Firestore under `users/{firebase-uid}/records` (or the collection path used by the records API).
-4. Upload a small PDF/TXT test file. Verify its metadata in Firestore and its object in Storage.
-5. Download and delete the test file; verify each action succeeds.
-6. Run `npm run lint` and `npm run build` from `frontend/` after code changes.
+2. Sign in and confirm the dashboard appears.
+3. Save a test record. In pgAdmin, inspect the `users` and `user_records` tables in the `nirnay` database.
+4. Upload a small PDF or TXT file. The file bytes should appear in Firebase Storage; its metadata should appear in PostgreSQL's `user_documents` table.
+5. Download and delete the file to check both the API and Storage connection.
+6. Run `npm run lint` and `npm run build` from `frontend/` after frontend changes.
 
-If the browser gets a 401, sign out and back in; confirm the backend is using the correct Firebase project/service account. If the backend returns 503, inspect its terminal for Admin SDK credential, project ID, Firestore, or bucket configuration errors.
+Each database query is filtered by the UID in the verified Firebase ID token, so one authenticated user's records and document metadata are not returned for another UID. If you already saved data to Firestore during earlier testing, this migration does not automatically copy it to PostgreSQL; export/transform it separately only if you need to preserve it.
 
-## 7. Enable push notifications (optional)
+## 9. Optional: browser push notifications
 
-1. Use `http://localhost:5173` or HTTPS; browser push generally will not work on arbitrary insecure origins.
-2. In Firebase Console → Cloud Messaging, ensure Cloud Messaging is available and configure the Web Push VAPID public key.
-3. Set `VITE_FIREBASE_VAPID_KEY` in `frontend/.env.local`, then restart Vite.
-4. Sign in and click **Enable notifications** on the dashboard; grant the browser permission.
-5. If testing backend-generated notifications, set `ENABLE_TEST_NOTIFICATIONS=true` in `backend/.env` temporarily, restart the backend, and call the authenticated `POST /api/v1/notifications/test` endpoint (for example using the browser's signed-in session or an API tool with a Firebase ID token). Turn the flag off afterward.
+1. In Firebase Console → Cloud Messaging, configure the Web Push certificate/public VAPID key.
+2. Set `VITE_FIREBASE_VAPID_KEY` in `frontend/.env.local` and restart Vite.
+3. Open the frontend over `http://localhost:5173` or HTTPS, sign in, and click **Enable notifications**.
+4. Grant notification permission in the browser.
+5. For a backend notification test only, set `ENABLE_TEST_NOTIFICATIONS=true` in `backend/.env`, restart the backend, and call the authenticated `POST /api/v1/notifications/test` endpoint. Set it back to `false` afterwards.
 
-The service worker receives the Web App's public config via its registration URL. Do not expose the Firebase Admin service-account key to the browser. Clear or unregister an old service worker in browser DevTools → Application → Service Workers if a stale worker continues using old settings.
-
-## 8. Common commands
-
-From repository root:
-
-```powershell
-# Update the checkout safely
-git switch main
-git pull --ff-only origin main
-
-# Frontend checks
-cd frontend
-npm install
-npm run lint
-npm run build
-npm run dev
-```
-
-Run the backend in a separate terminal as shown above. Do not use `git reset --hard` to fix a pull conflict if you have uncommitted changes; stash or commit your work first.
+Push notifications are optional for testing authentication, PostgreSQL records, and document storage.

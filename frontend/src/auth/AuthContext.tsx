@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type PropsWithChildren } from 'react';
 import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut as firebaseSignOut, updateProfile } from 'firebase/auth';
-import { AuthContext, type AuthContextValue } from './authContext';
+import { AuthContext, type AuthContextValue } from './auth-context';
 import { auth } from '../lib/firebase';
 
 function requireAuth() {
@@ -12,7 +12,6 @@ function requireAuth() {
 
 export function AuthProvider({ children }: PropsWithChildren) {
   const [user, setUser] = useState<import('firebase/auth').User | null>(null);
-  // When Firebase is unconfigured, initialize loading as false instead of updating it synchronously in an effect.
   const [loading, setLoading] = useState(Boolean(auth));
 
   useEffect(() => {
