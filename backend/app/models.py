@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, Integer, JSON, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
@@ -15,7 +16,7 @@ class UserProfile(Base):
     photo_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     role: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[object] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
