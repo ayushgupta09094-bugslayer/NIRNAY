@@ -22,7 +22,7 @@ Firestore is not used by this backend. PostgreSQL tables are created automatical
 Run from PowerShell:
 
 ```powershell
-git clone https://github.com/ayushgupta09094-bugslayer/NIRNAY.git
+git clone --branch feature/postgresql-backend https://github.com/ayushgupta09094-bugslayer/NIRNAY.git
 cd NIRNAY
 
 cd frontend
@@ -72,10 +72,13 @@ Install PostgreSQL for Windows using the official installer from [postgresql.org
 
 ### B. Create a database and app user
 
-Open **pgAdmin**, connect to your local PostgreSQL server, right-click the server's database/query tools, and open the Query Tool while connected as the PostgreSQL administrator. Run this SQL once:
+Open **pgAdmin**, connect to your local PostgreSQL server, and open the Query Tool while connected as the PostgreSQL administrator. Run the first statement and execute it; then run the second statement separately and execute it. This avoids PostgreSQL's restriction on creating a database inside a transaction block:
 
 ```sql
 CREATE USER nirnay_user WITH PASSWORD 'choose-a-strong-password';
+```
+
+```sql
 CREATE DATABASE nirnay OWNER nirnay_user;
 ```
 
