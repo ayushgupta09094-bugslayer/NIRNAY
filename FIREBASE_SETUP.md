@@ -16,10 +16,13 @@ NIRNAY uses PostgreSQL for application data and Firebase for identity and cloud 
 
 ## 1. Create the PostgreSQL database
 
-Install PostgreSQL for Windows from [postgresql.org](https://www.postgresql.org/download/windows/), start the service, and open pgAdmin. Connect as your database administrator and run this SQL once:
+Install PostgreSQL for Windows from [postgresql.org](https://www.postgresql.org/download/windows/), start the service, and open pgAdmin. Connect as your database administrator. Run the first statement and execute it; then run the second statement separately and execute it:
 
 ```sql
 CREATE USER nirnay_user WITH PASSWORD 'choose-a-strong-password';
+```
+
+```sql
 CREATE DATABASE nirnay OWNER nirnay_user;
 ```
 
