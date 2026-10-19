@@ -17,10 +17,10 @@ class UserProfile(Base):
     email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     role: Mapped[str | None] = mapped_column(String(80), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    updated_at: Mapped[object] = mapped_column(
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
-    last_login_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    last_login_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class UserRecord(Base):
@@ -31,8 +31,8 @@ class UserRecord(Base):
     title: Mapped[str] = mapped_column(String(160), nullable=False)
     kind: Mapped[str] = mapped_column(String(40), nullable=False, default="other")
     data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    updated_at: Mapped[object] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
@@ -46,7 +46,7 @@ class UserDocument(Base):
     content_type: Mapped[str] = mapped_column(String(255), nullable=False, default="application/octet-stream")
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     object_path: Mapped[str] = mapped_column(String(1024), nullable=False, unique=True)
-    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class PushInstallation(Base):
@@ -55,6 +55,6 @@ class PushInstallation(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     owner_uid: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     fid: Mapped[str] = mapped_column(String(256), nullable=False)
-    updated_at: Mapped[object] = mapped_column(
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
