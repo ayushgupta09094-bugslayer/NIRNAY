@@ -1,16 +1,15 @@
 import os
 import re
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from firebase_admin import storage
-from sqlalchemy.orm import Session
 
-from app.core.database import get_db
 from app.core.firebase import get_firebase_app
+from app.core.firestore_db import collection, document_data, iso, owned_documents
 from app.core.security import require_user
-from app.models import UserDocument
 
 router = APIRouter(prefix="/api/v1/documents", tags=["Documents"])
 MAX_BYTES = 15 * 1024 * 1024
@@ -23,13 +22,13 @@ def clean_filename(value: str | None) -> str:
     return (name or "upload")[:180]
 
 
-def serialize(document: UserDocument) -> dict[str, Any]:
+def serialize(document: dict[str, Any]) -> dict[str, Any]:
     return {
-        "id": document.id,
-        "filename": document.filename,
-        "content_type": document.content_type,
-        "size_bytes": document.size_bytes,
-        "created_at": document.created_at.isoformat() if document.created_at else None,
+        "id": document["id"],
+        "filename": document["filename"],
+        "content_type": document["content_type"],
+        "size_bytes": document["size_bytes"],
+        "created_at": iso(document.get("created_at")),
     }
 
 
@@ -40,28 +39,18 @@ def get_bucket():
             app=get_firebase_app(),
         )
     except Exception as exc:
-        raise HTTPException(status_code=503, detail="Firebase Storage is not configured.") from exc
+        raise HTTPException(status_code=503, detail="Firebase Storage is not configured. It may require enabling billing.") from exc
 
 
 @router.get("")
-def list_documents(
-    user: dict[str, Any] = Depends(require_user),
-    db: Session = Depends(get_db),
-) -> list[dict[str, Any]]:
-    documents = (
-        db.query(UserDocument)
-        .filter(UserDocument.owner_uid == user["uid"])
-        .order_by(UserDocument.created_at.desc())
-        .all()
-    )
-    return [serialize(document) for document in documents]
+def list_documents(user: dict[str, Any] = Depends(require_user)) -> list[dict[str, Any]]:
+    return [serialize(item) for item in owned_documents("user_documents", user["uid"])]
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def upload_document(
     file: UploadFile = File(...),
     user: dict[str, Any] = Depends(require_user),
-    db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     filename = clean_filename(file.filename)
     ext = os.path.splitext(filename)[1].lower()
@@ -98,62 +87,49 @@ async def upload_document(
     try:
         blob.upload_from_string(content, content_type=mime)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail="File could not be stored in Firebase Storage.") from exc
+        raise HTTPException(status_code=502, detail="File could not be stored in Firebase Storage. Confirm Storage is enabled and billing requirements are satisfied.") from exc
 
-    document = UserDocument(
-        id=document_id,
-        owner_uid=uid,
-        filename=filename,
-        content_type=mime,
-        size_bytes=len(content),
-        object_path=object_path,
-    )
+    now = datetime.now(timezone.utc)
+    metadata = {
+        "owner_uid": uid,
+        "filename": filename,
+        "content_type": mime,
+        "size_bytes": len(content),
+        "object_path": object_path,
+        "created_at": now,
+    }
     try:
-        db.add(document)
-        db.commit()
-        db.refresh(document)
+        collection("user_documents").document(document_id).set(metadata)
     except Exception as exc:
-        db.rollback()
         try:
             blob.delete()
         except Exception:
             pass
-        raise HTTPException(
-            status_code=503,
-            detail="File was uploaded, but its metadata could not be saved to PostgreSQL.",
-        ) from exc
+        raise HTTPException(status_code=503, detail="File uploaded but its metadata could not be saved to Firestore.") from exc
 
-    return serialize(document)
+    return serialize({"id": document_id, **metadata})
 
 
 @router.get("/{document_id}/download")
-def download_document(
-    document_id: str,
-    user: dict[str, Any] = Depends(require_user),
-    db: Session = Depends(get_db),
-) -> Response:
-    document = (
-        db.query(UserDocument)
-        .filter(UserDocument.id == document_id, UserDocument.owner_uid == user["uid"])
-        .first()
-    )
-    if document is None:
+def download_document(document_id: str, user: dict[str, Any] = Depends(require_user)) -> Response:
+    document = document_data(collection("user_documents").document(document_id).get())
+    if document is None or document.get("owner_uid") != user["uid"]:
         raise HTTPException(status_code=404, detail="Document not found.")
 
     expected_prefix = f"users/{user['uid']}/documents/"
-    if not document.object_path.startswith(expected_prefix):
+    if not document.get("object_path", "").startswith(expected_prefix):
         raise HTTPException(status_code=403, detail="Document access denied.")
 
     try:
-        data = get_bucket().blob(document.object_path).download_as_bytes()
+        data = get_bucket().blob(document["object_path"]).download_as_bytes()
     except Exception as exc:
         raise HTTPException(status_code=502, detail="File could not be retrieved from Storage.") from exc
 
-    filename = clean_filename(document.filename)
+    filename = clean_filename(document["filename"])
     ascii_name = filename.encode("ascii", errors="ignore").decode("ascii").replace('"', "") or "download"
     return Response(
         content=data,
-        media_type=document.content_type,
+        media_type=document["content_type"],
         headers={
             "Content-Disposition": f'attachment; filename="{ascii_name}"',
             "Cache-Control": "private, no-store",
@@ -163,28 +139,20 @@ def download_document(
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_document(
-    document_id: str,
-    user: dict[str, Any] = Depends(require_user),
-    db: Session = Depends(get_db),
-) -> Response:
-    document = (
-        db.query(UserDocument)
-        .filter(UserDocument.id == document_id, UserDocument.owner_uid == user["uid"])
-        .first()
-    )
-    if document is None:
+def delete_document(document_id: str, user: dict[str, Any] = Depends(require_user)) -> Response:
+    ref = collection("user_documents").document(document_id)
+    document = document_data(ref.get())
+    if document is None or document.get("owner_uid") != user["uid"]:
         raise HTTPException(status_code=404, detail="Document not found.")
 
     expected_prefix = f"users/{user['uid']}/documents/"
-    if not document.object_path.startswith(expected_prefix):
+    if not document.get("object_path", "").startswith(expected_prefix):
         raise HTTPException(status_code=403, detail="Document access denied.")
 
     try:
-        get_bucket().blob(document.object_path).delete()
+        get_bucket().blob(document["object_path"]).delete()
     except Exception as exc:
         raise HTTPException(status_code=502, detail="File could not be deleted from Storage.") from exc
 
-    db.delete(document)
-    db.commit()
+    ref.delete()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
