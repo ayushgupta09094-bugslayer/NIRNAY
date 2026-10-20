@@ -5,11 +5,9 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
-from app.core.database import get_db
+from app.core.firestore_db import collection, document_data
 from app.core.security import require_user
-from app.models import PushInstallation
 from app.services.notifications import send_user_notification
 
 router = APIRouter(prefix="/api/v1/notifications", tags=["Notifications"])
@@ -24,39 +22,28 @@ def installation_key(uid: str, fid: str) -> str:
 
 
 @router.post("/register")
-def register_fid(
-    body: FIDRegistration,
-    user: dict[str, Any] = Depends(require_user),
-    db: Session = Depends(get_db),
-) -> dict[str, bool]:
+def register_fid(body: FIDRegistration, user: dict[str, Any] = Depends(require_user)) -> dict[str, bool]:
     uid = user["uid"]
     key = installation_key(uid, body.fid)
-    installation = db.get(PushInstallation, key)
-    if installation is None:
-        installation = PushInstallation(id=key, owner_uid=uid, fid=body.fid)
-        db.add(installation)
-    else:
-        installation.fid = body.fid
-        installation.updated_at = datetime.now(timezone.utc)
-    db.commit()
+    ref = collection("push_installations").document(key)
+    existing = document_data(ref.get())
+    now = datetime.now(timezone.utc)
+    ref.set({
+        "owner_uid": uid,
+        "fid": body.fid,
+        "updated_at": now,
+        "created_at": existing.get("created_at", now) if existing else now,
+    }, merge=True)
     return {"ok": True}
 
 
 @router.delete("/register")
-def unregister_fid(
-    body: FIDRegistration,
-    user: dict[str, Any] = Depends(require_user),
-    db: Session = Depends(get_db),
-) -> dict[str, bool]:
+def unregister_fid(body: FIDRegistration, user: dict[str, Any] = Depends(require_user)) -> dict[str, bool]:
     key = installation_key(user["uid"], body.fid)
-    installation = (
-        db.query(PushInstallation)
-        .filter(PushInstallation.id == key, PushInstallation.owner_uid == user["uid"])
-        .first()
-    )
-    if installation is not None:
-        db.delete(installation)
-        db.commit()
+    ref = collection("push_installations").document(key)
+    installation = document_data(ref.get())
+    if installation is not None and installation.get("owner_uid") == user["uid"]:
+        ref.delete()
     return {"ok": True}
 
 
